@@ -21,6 +21,9 @@ const languageChoices = [
   { code: 'zh-Hant', label: '繁體中文' },
 ] as const;
 
+const KEEPFLASH_MARKETING_URL =
+  'https://keepflash.com/?utm_source=localkeepflash&utm_medium=extension&utm_campaign=onboarding';
+
 export function SettingsApp({ mode }: { mode: Mode }) {
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [directory, setDirectory] = useState<FileSystemDirectoryHandle | null>(null);
@@ -42,6 +45,11 @@ export function SettingsApp({ mode }: { mode: Mode }) {
       },
     );
   }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = preferences.locale === 'zh' ? 'zh-CN' : 'en';
+    document.title = mode === 'onboarding' ? text.pageTitleOnboarding : text.pageTitleSettings;
+  }, [mode, preferences.locale, text]);
 
   async function chooseDirectory() {
     setNotice('');
@@ -103,11 +111,11 @@ export function SettingsApp({ mode }: { mode: Mode }) {
     setNotice(text.saved);
     if (mode === 'onboarding') {
       setStep(4);
-      await browser.runtime.sendMessage({ type: 'ONBOARDING_COMPLETE' }).catch(() => undefined);
     }
+    await browser.runtime.sendMessage({ type: 'ONBOARDING_COMPLETE' }).catch(() => undefined);
   }
 
-  if (busy) return <main className="shell loading" aria-label="Loading" />;
+  if (busy) return <main className="shell loading" aria-label={text.loading} />;
 
   const isReadyScreen = mode === 'onboarding' && step === 4;
   const orderedLanguageChoices = [
@@ -127,7 +135,7 @@ export function SettingsApp({ mode }: { mode: Mode }) {
           <span>LocalKeepFlash</span>
         </a>
         <label className="locale-switch">
-          <span className="sr-only">Language</span>
+          <span className="sr-only">{text.languageLabel}</span>
           <select
             value={preferences.locale}
             onChange={(event) =>
@@ -152,24 +160,24 @@ export function SettingsApp({ mode }: { mode: Mode }) {
         <div className="file-stack" aria-hidden="true">
           <span className="file-card file-card-back">.md</span>
           <span className="file-card file-card-middle">01</span>
-          <span className="file-card file-card-front">LOCAL</span>
+          <span className="file-card file-card-front">{text.localLabel}</span>
         </div>
       </section>
 
       {isReadyScreen ? (
         <section className="ready-panel">
           <span className="ready-pulse" />
-          <p className="section-number">03 — READY</p>
+          <p className="section-number">{text.readyStep}</p>
           <h2>{text.readyTitle}</h2>
           <p>{text.readyBody}</p>
           <button className="primary" onClick={() => window.close()}>
-            OK
+            {text.readyButton}
           </button>
         </section>
       ) : (
         <section className="steps" aria-live="polite">
           <article className={`step-card ${step === 1 || mode === 'options' ? 'active' : ''}`}>
-            <p className="section-number">01 — PERMISSION</p>
+            <p className="section-number">{text.permissionStep}</p>
             <h2>{text.permissionTitle}</h2>
             <p>{text.permissionBody}</p>
             {mode === 'onboarding' && step === 1 && (
@@ -178,7 +186,7 @@ export function SettingsApp({ mode }: { mode: Mode }) {
           </article>
 
           <article className={`step-card ${step === 2 || mode === 'options' ? 'active' : ''}`}>
-            <p className="section-number">02 — FOLDER</p>
+            <p className="section-number">{text.folderStep}</p>
             <h2>{text.folderTitle}</h2>
             <p>{text.folderBody}</p>
             <button className="folder-button" onClick={chooseDirectory}>
@@ -193,7 +201,7 @@ export function SettingsApp({ mode }: { mode: Mode }) {
           </article>
 
           <article className={`step-card ${step === 3 || mode === 'options' ? 'active' : ''}`}>
-            <p className="section-number">03 — CAPTIONS</p>
+            <p className="section-number">{text.captionsStep}</p>
             <h2>{text.languageTitle}</h2>
             <p>{text.languageBody}</p>
             <div className="language-list">
@@ -208,7 +216,7 @@ export function SettingsApp({ mode }: { mode: Mode }) {
                       <span className="order-buttons">
                         <button
                           type="button"
-                          aria-label={`Move ${language.label} up`}
+                          aria-label={`${language.label} ${text.moveUp}`}
                           disabled={order === 0}
                           onClick={(event) => {
                             event.preventDefault();
@@ -217,7 +225,7 @@ export function SettingsApp({ mode }: { mode: Mode }) {
                         >↑</button>
                         <button
                           type="button"
-                          aria-label={`Move ${language.label} down`}
+                          aria-label={`${language.label} ${text.moveDown}`}
                           disabled={order === preferences.transcriptLanguages.length - 1}
                           onClick={(event) => {
                             event.preventDefault();
@@ -240,6 +248,32 @@ export function SettingsApp({ mode }: { mode: Mode }) {
             </button>
           </article>
         </section>
+      )}
+      {mode === 'onboarding' && (
+        <aside className="keepflash-bridge" aria-labelledby="keepflash-bridge-title">
+          <div className="keepflash-bridge-copy">
+            <p className="section-number">{text.keepFlashEyebrow}</p>
+            <h2 id="keepflash-bridge-title">{text.keepFlashTitle}</h2>
+            <p>{text.keepFlashBody}</p>
+            <div className="keepflash-bridge-action">
+              <a
+                href={KEEPFLASH_MARKETING_URL}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {text.keepFlashCta}
+                <span aria-hidden="true">↗</span>
+              </a>
+              <small>{text.keepFlashNote}</small>
+            </div>
+          </div>
+          <div className="keepflash-bridge-mark" aria-hidden="true">
+            <span>{text.keepFlashMarkKicker}</span>
+            <i />
+            <strong>KEEPFLASH</strong>
+            <small>{text.keepFlashMarkFeatures}</small>
+          </div>
+        </aside>
       )}
       {notice && <div className="notice">{notice}</div>}
       <footer>

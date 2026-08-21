@@ -1,4 +1,7 @@
 import { CAPTURE_SCHEMA_VERSION, type Capture, type Chapter, type TranscriptSegment } from '@/domain/capture';
+import { escapeMarkdownText, escapeMarkdownTextBlock } from '@/domain/markdown';
+import { readResponseJson } from '@/network/response-body';
+import { safeFinalResponseUrl, safeRemoteUrl } from '@/network/url-safety';
 import type { Preferences } from '@/storage/settings';
 import { materializePageCapture } from './materialize-capture';
 
@@ -26,10 +29,18 @@ interface YoutubePageContext {
   playerResponse?: unknown;
   timedTextUrls: string[];
   documentTitle: string;
+  pageUrl: string;
 }
 
-function text(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+const MAX_PLAYER_BYTES = 5 * 1024 * 1024;
+const MAX_TRANSCRIPT_BYTES = 20 * 1024 * 1024;
+const MAX_TRANSCRIPT_SEGMENTS = 20_000;
+const MAX_TRANSCRIPT_CHARACTERS = 2_000_000;
+
+function text(value: unknown, maxLength = 200_000): string | undefined {
+  return typeof value === 'string' && value.trim()
+    ? Array.from(value.trim()).slice(0, maxLength).join('')
+    : undefined;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -63,12 +74,12 @@ function parsePlayerResponse(response: unknown): PlayerSummary {
 
   return {
     videoId: text(details.videoId),
-    title: text(details.title) ?? text(title.simpleText),
+    title: text(details.title, 1_000) ?? text(title.simpleText, 1_000),
     description: text(details.shortDescription) ?? text(description.simpleText),
     coverImage: Array.isArray(thumbnails)
       ? text(record(thumbnails[thumbnails.length - 1]).url)
       : undefined,
-    captionTracks: (Array.isArray(rawTracks) ? rawTracks : [])
+    captionTracks: (Array.isArray(rawTracks) ? rawTracks.slice(0, 200) : [])
       .map((value) => {
         const track = record(value);
         const name = record(track.name);
@@ -112,7 +123,8 @@ function parseJson3(payload: unknown): TranscriptSegment[] {
   if (!Array.isArray(events)) return [];
 
   const transcript: TranscriptSegment[] = [];
-  for (const rawEvent of events) {
+  let totalCharacters = 0;
+  for (const rawEvent of events.slice(0, MAX_TRANSCRIPT_SEGMENTS)) {
     const event = rawEvent as {
       tStartMs?: unknown;
       dDurationMs?: unknown;
@@ -125,10 +137,13 @@ function parseJson3(payload: unknown): TranscriptSegment[] {
       .replace(/\s+/g, ' ')
       .trim();
     if (!segmentText) continue;
+    const boundedText = Array.from(segmentText).slice(0, 10_000).join('');
+    if (totalCharacters + boundedText.length > MAX_TRANSCRIPT_CHARACTERS) break;
+    totalCharacters += boundedText.length;
     const startSeconds = event.tStartMs / 1000;
     const duration = typeof event.dDurationMs === 'number' ? event.dDurationMs / 1000 : 5;
     transcript.push({
-      text: segmentText,
+      text: boundedText,
       startSeconds,
       endSeconds: startSeconds + duration,
     });
@@ -162,11 +177,25 @@ function parseChapters(description: string | undefined): Chapter[] {
   );
 }
 
-async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+async function fetchJsonWithTimeout(
+  url: string,
+  byteLimit: number,
+  init?: RequestInit,
+  options: { youtubeCaption?: boolean } = {},
+): Promise<unknown | null> {
+  const safeUrl = safeRemoteUrl(url, options);
+  if (!safeUrl) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
-    return await fetch(url, { ...init, signal: controller.signal, credentials: 'omit' });
+    const response = await fetch(safeUrl.toString(), {
+      ...init,
+      signal: controller.signal,
+      credentials: 'omit',
+      redirect: 'error',
+    });
+    if (!response.ok || !safeFinalResponseUrl(response, options)) return null;
+    return await readResponseJson(response, byteLimit);
   } finally {
     clearTimeout(timeout);
   }
@@ -177,8 +206,9 @@ async function freshPlayerResponse(
   videoId: string,
 ): Promise<unknown | null> {
   if (!context.apiKey || !context.clientVersion) return null;
-  const response = await fetchWithTimeout(
+  return fetchJsonWithTimeout(
     `https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(context.apiKey)}`,
+    MAX_PLAYER_BYTES,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -195,16 +225,22 @@ async function freshPlayerResponse(
         },
       }),
     },
+    { youtubeCaption: true },
   );
-  return response.ok ? response.json() : null;
 }
 
 async function fetchTranscript(baseUrl: string): Promise<TranscriptSegment[]> {
-  const url = new URL(baseUrl);
+  const safeUrl = safeRemoteUrl(baseUrl, { youtubeCaption: true });
+  if (!safeUrl) return [];
+  const url = new URL(safeUrl);
   url.searchParams.set('fmt', 'json3');
-  const response = await fetchWithTimeout(url.toString());
-  if (!response.ok) return [];
-  return parseJson3(await response.json());
+  const payload = await fetchJsonWithTimeout(
+    url.toString(),
+    MAX_TRANSCRIPT_BYTES,
+    undefined,
+    { youtubeCaption: true },
+  );
+  return parseJson3(payload);
 }
 
 function timedTextTrack(
@@ -216,7 +252,11 @@ function timedTextTrack(
   for (const value of urls) {
     try {
       const url = new URL(value);
-      if (url.pathname !== '/api/timedtext' || url.searchParams.get('v') !== videoId) continue;
+      if (
+        !safeRemoteUrl(value, { youtubeCaption: true }) ||
+        url.pathname !== '/api/timedtext' ||
+        url.searchParams.get('v') !== videoId
+      ) continue;
       tracks.push({
         baseUrl: value,
         languageCode: url.searchParams.get('lang') ?? undefined,
@@ -263,6 +303,7 @@ export async function readYoutubePageContext(tabId: number): Promise<YoutubePage
         playerResponse: global.ytInitialPlayerResponse,
         timedTextUrls,
         documentTitle: document.title,
+        pageUrl: location.href,
       };
     },
   });
@@ -279,6 +320,7 @@ export async function materializeYoutubeCapture(
   if (!videoId) throw new Error('This is not a supported YouTube video URL.');
   const normalizedUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const context = await readYoutubePageContext(tabId);
+  if (context.pageUrl !== sourceUrl) throw new Error('The YouTube tab changed before capture.');
   let player = parsePlayerResponse(context.playerResponse);
   if (player.videoId && player.videoId !== videoId) player = { captionTracks: [] };
 
@@ -316,8 +358,11 @@ export async function materializeYoutubeCapture(
   }
 
   const title = player.title ?? context.documentTitle.replace(/\s+-\s+YouTube$/, '') ?? 'YouTube video';
-  const coverMarkdown = player.coverImage
-    ? `![${title.replaceAll('[', '').replaceAll(']', '')}](${player.coverImage})`
+  const safeCoverImage = player.coverImage && safeRemoteUrl(player.coverImage)
+    ? player.coverImage
+    : undefined;
+  const coverMarkdown = safeCoverImage
+    ? `![${escapeMarkdownText(title)}](<${safeCoverImage}>)`
     : '';
   const base = await materializePageCapture(
     {
@@ -325,8 +370,10 @@ export async function materializeYoutubeCapture(
       canonicalUrl: normalizedUrl,
       siteName: 'YouTube',
       language: selectedTrack?.languageCode,
-      markdown: [coverMarkdown, player.description].filter(Boolean).join('\n\n'),
-      assets: player.coverImage ? [{ sourceUrl: player.coverImage, alt: title }] : [],
+      markdown: [coverMarkdown, escapeMarkdownTextBlock(player.description ?? '')]
+        .filter(Boolean)
+        .join('\n\n'),
+      assets: safeCoverImage ? [{ sourceUrl: safeCoverImage, alt: title }] : [],
       extractionStatus: transcript.length > 0 ? 'complete' : 'partial',
     },
     { ...identity, sourceUrl: normalizedUrl },

@@ -3,5 +3,6 @@
   "extensionDescription": { "message": "Save pages, selections, images, and YouTube transcripts directly to local Markdown." },
   "savePage": { "message": "Save page to LocalKeepFlash" },
   "saveSelection": { "message": "Save selection to LocalKeepFlash" },
-  "saveImage": { "message": "Save image to LocalKeepFlash" }
+  "saveImage": { "message": "Save image to LocalKeepFlash" },
+  "saveCommand": { "message": "Save the current page to LocalKeepFlash" }
 }

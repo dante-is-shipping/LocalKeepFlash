@@ -3,9 +3,10 @@ import type { ExtractedPage, ExtractedSelection } from '@/extraction/page-extrac
 export type ToastTone = 'working' | 'success' | 'partial' | 'error';
 
 export type ContentRequest =
-  | { type: 'EXTRACT_PAGE' }
-  | { type: 'EXTRACT_SELECTION' }
-  | { type: 'GET_PAGE_CONTEXT' }
+  | { type: 'GET_DOCUMENT_TOKEN' }
+  | { type: 'EXTRACT_PAGE'; expectedUrl: string; expectedDocumentToken: string }
+  | { type: 'EXTRACT_SELECTION'; expectedUrl: string; expectedDocumentToken: string }
+  | { type: 'GET_PAGE_CONTEXT'; expectedUrl: string; expectedDocumentToken: string }
   | { type: 'SHOW_TOAST'; tone: ToastTone; message: string };
 
 export interface PageContext {
@@ -17,5 +18,5 @@ export interface PageContext {
 }
 
 export type ContentResponse =
-  | { ok: true; payload: ExtractedPage | ExtractedSelection | PageContext | null }
+  | { ok: true; payload: ExtractedPage | ExtractedSelection | PageContext | string | null }
   | { ok: false; error: string };

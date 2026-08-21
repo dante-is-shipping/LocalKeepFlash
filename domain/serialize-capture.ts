@@ -1,5 +1,6 @@
 import { stringify } from 'yaml';
 import type { Capture } from './capture';
+import { escapeMarkdownText } from './markdown';
 
 function videoTimestampUrl(sourceUrl: string, startSeconds: number): string {
   const url = new URL(sourceUrl);
@@ -49,14 +50,14 @@ export function serializeCapture(capture: Capture): string {
     metadata.transcript_status = capture.youtube.transcriptStatus;
   }
 
-  const sections = [`# ${capture.title}`];
+  const sections = [`# ${escapeMarkdownText(capture.title)}`];
   const body = capture.markdown.trim();
   if (body) sections.push(body);
 
   if (capture.youtube?.chapters.length) {
     const chapters = capture.youtube.chapters.map(
       (chapter) =>
-        `- [${formatTimestamp(chapter.startSeconds)}](${videoTimestampUrl(capture.sourceUrl, chapter.startSeconds)}) ${chapter.title}`,
+        `- [${formatTimestamp(chapter.startSeconds)}](${videoTimestampUrl(capture.sourceUrl, chapter.startSeconds)}) ${escapeMarkdownText(chapter.title)}`,
     );
     sections.push(`## Chapters\n\n${chapters.join('\n')}`);
   }
@@ -64,7 +65,7 @@ export function serializeCapture(capture: Capture): string {
   if (capture.youtube?.transcript.length) {
     const transcript = capture.youtube.transcript.map(
       (segment) =>
-        `[${formatTimestamp(segment.startSeconds)}](${videoTimestampUrl(capture.sourceUrl, segment.startSeconds)}) ${segment.text}`,
+        `[${formatTimestamp(segment.startSeconds)}](${videoTimestampUrl(capture.sourceUrl, segment.startSeconds)}) ${escapeMarkdownText(segment.text)}`,
     );
     sections.push(`## Transcript\n\n${transcript.join('\n\n')}`);
   }

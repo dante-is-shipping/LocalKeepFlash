@@ -1,5 +1,7 @@
 # LocalKeepFlash
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 LocalKeepFlash is a local-first Chromium web clipper. It saves readable pages, exact selections, images, and YouTube transcripts directly into a folder you choose as portable Markdown and local assets.
 
 There is no account, KeepFlash API, cloud database, analytics, AI service, or local daemon in the saving path.
@@ -19,7 +21,7 @@ Unsupported in `0.1.0`: PDF viewers, `file://` URLs, browser-internal pages, and
 
 ```text
 chosen-folder/
-├── notes/YYYY/MM/<timestamp--title--short-id>.md
+├── notes/YYYY/MM/<title--short-id>.md
 ├── assets/<clip-id>/<asset>
 └── .local-keepflash/
     ├── schema.json
@@ -27,6 +29,12 @@ chosen-folder/
 ```
 
 Each note contains versioned YAML frontmatter. LocalKeepFlash never silently overwrites an earlier capture and never rewrites old notes during an extension update.
+
+## When local files are not enough
+
+LocalKeepFlash is for people who want portable Markdown and direct ownership of their archive. If you want to search across webpages, PDFs, videos, files, and notes, connect related material, annotate sources, and ask AI with the original context intact, explore [KeepFlash](https://keepflash.com/?utm_source=github&utm_medium=readme&utm_campaign=localkeepflash).
+
+KeepFlash is an optional hosted product. LocalKeepFlash does not require a KeepFlash account and never sends your captures to KeepFlash.
 
 ## Install for development
 

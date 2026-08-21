@@ -1,8 +1,13 @@
 import { CAPTURE_SCHEMA_VERSION, type Capture, type CaptureAsset } from '@/domain/capture';
+import { escapeMarkdownText } from '@/domain/markdown';
+import { readResponseBytes } from '@/network/response-body';
+import { safeFinalResponseUrl, safeRemoteUrl } from '@/network/url-safety';
 import type { ExtractedPage, ExtractedSelection } from './page-extractor';
 
 const MAX_ASSET_BYTES = 25 * 1024 * 1024;
 const MAX_CAPTURE_ASSET_BYTES = 100 * 1024 * 1024;
+const MAX_ASSET_COUNT = 64;
+const MAX_CAPTURE_MILLISECONDS = 30_000;
 
 const mediaExtensions: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -61,19 +66,21 @@ async function sha256Prefix(bytes: Uint8Array): Promise<string> {
 async function downloadAsset(
   sourceUrl: string,
   fetcher: AssetFetcher,
+  byteLimit = MAX_ASSET_BYTES,
+  timeoutMilliseconds = 15_000,
 ): Promise<CaptureAsset | null> {
+  if (!safeRemoteUrl(sourceUrl)) return null;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMilliseconds);
   try {
     const response = await fetcher(sourceUrl, controller.signal);
-    if (!response.ok) return null;
+    if (!response.ok || !safeFinalResponseUrl(response)) return null;
     const mediaType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
     if (!mediaType || !mediaExtensions[mediaType]) return null;
     const declaredSize = Number(response.headers.get('content-length') ?? 0);
-    if (declaredSize > MAX_ASSET_BYTES) return null;
+    if (declaredSize > byteLimit) return null;
 
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > MAX_ASSET_BYTES) return null;
+    const bytes = await readResponseBytes(response, byteLimit);
     const hash = await sha256Prefix(bytes);
     return {
       sourceUrl,
@@ -91,15 +98,38 @@ async function downloadAsset(
 export async function materializePageCapture(
   extracted: ExtractedPage,
   identity: CaptureIdentity,
-  fetcher: AssetFetcher = (url, signal) => fetch(url, { credentials: 'omit', signal }),
+  fetcher: AssetFetcher = (url, signal) => fetch(url, {
+    credentials: 'omit',
+    redirect: 'error',
+    signal,
+  }),
 ): Promise<Capture> {
   let markdown = extracted.markdown;
   let extractionStatus = extracted.extractionStatus;
   let totalBytes = 0;
   const assets: CaptureAsset[] = [];
+  const deadline = Date.now() + MAX_CAPTURE_MILLISECONDS;
+  const candidates = extracted.assets.slice(0, MAX_ASSET_COUNT);
+  if (candidates.length !== extracted.assets.length) extractionStatus = 'partial';
 
-  for (const candidate of extracted.assets) {
-    const asset = await downloadAsset(candidate.sourceUrl, fetcher);
+  for (const candidate of candidates) {
+    if (!safeRemoteUrl(candidate.sourceUrl)) {
+      markdown = markdown.split(candidate.sourceUrl).join('');
+      extractionStatus = 'partial';
+      continue;
+    }
+    const remainingBytes = MAX_CAPTURE_ASSET_BYTES - totalBytes;
+    const remainingMilliseconds = deadline - Date.now();
+    if (remainingBytes <= 0 || remainingMilliseconds <= 0) {
+      extractionStatus = 'partial';
+      break;
+    }
+    const asset = await downloadAsset(
+      candidate.sourceUrl,
+      fetcher,
+      Math.min(MAX_ASSET_BYTES, remainingBytes),
+      Math.min(15_000, remainingMilliseconds),
+    );
     if (!asset || !asset.bytes || totalBytes + asset.bytes.byteLength > MAX_CAPTURE_ASSET_BYTES) {
       extractionStatus = 'partial';
       continue;
@@ -126,37 +156,34 @@ export async function materializePageCapture(
   };
 }
 
-export function materializeSelectionCapture(
+export async function materializeSelectionCapture(
   extracted: ExtractedSelection,
   identity: CaptureIdentity,
-): Capture {
+  fetcher?: AssetFetcher,
+): Promise<Capture> {
+  const materialized = await materializePageCapture(extracted, identity, fetcher);
   return {
-    schemaVersion: CAPTURE_SCHEMA_VERSION,
-    id: identity.id,
+    ...materialized,
     type: 'selection',
-    title: extracted.title,
-    sourceUrl: identity.sourceUrl,
-    canonicalUrl: extracted.canonicalUrl,
     textFragmentUrl: extracted.textFragmentUrl,
-    siteName: extracted.siteName,
-    capturedAt: identity.capturedAt,
-    language: extracted.language,
-    extractionStatus: 'complete',
-    markdown: extracted.markdown,
-    assets: [],
   };
 }
 
 export async function materializeImageCapture(
   input: ImageCaptureInput,
   identity: CaptureIdentity,
-  fetcher: AssetFetcher = (url, signal) => fetch(url, { credentials: 'omit', signal }),
+  fetcher: AssetFetcher = (url, signal) => fetch(url, {
+    credentials: 'omit',
+    redirect: 'error',
+    signal,
+  }),
 ): Promise<Capture> {
   const asset = await downloadAsset(input.imageUrl, fetcher);
-  const alt = input.alt?.trim() || input.pageTitle;
+  const alt = escapeMarkdownText(input.alt?.trim() || input.pageTitle);
+  const safeSourceUrl = safeRemoteUrl(input.imageUrl)?.toString();
   const localPath = asset
     ? `../../../assets/${identity.id}/${asset.path}`
-    : input.imageUrl;
+    : safeSourceUrl;
 
   return {
     schemaVersion: CAPTURE_SCHEMA_VERSION,
@@ -170,7 +197,9 @@ export async function materializeImageCapture(
     capturedAt: identity.capturedAt,
     language: input.language,
     extractionStatus: asset ? 'complete' : 'partial',
-    markdown: `![${alt.replaceAll('[', '').replaceAll(']', '')}](${localPath})`,
+    markdown: localPath
+      ? `![${alt}](${asset ? localPath : `<${localPath}>`})`
+      : 'The image source was blocked because it targeted a local or unsafe address.',
     assets: asset ? [asset] : [],
   };
 }

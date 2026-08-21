@@ -7,9 +7,12 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "wxt -p 3002",
+    "prebuild": "npm run licenses",
     "build": "wxt build",
+    "prezip": "npm run licenses",
     "zip": "wxt zip",
-    "prepare": "wxt prepare",
+    "prepare": "npm run licenses && wxt prepare",
+    "licenses": "node scripts/generate-third-party-licenses.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

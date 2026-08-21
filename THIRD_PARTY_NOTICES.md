@@ -15,3 +15,5 @@ LocalKeepFlash depends on open-source software distributed under its own terms. 
 | TypeScript | Apache-2.0 |
 
 This notice is informational and does not replace the license text distributed by each dependency.
+
+The extension archive also includes `THIRD_PARTY_LICENSES.txt`, generated from the exact installed dependency versions by `npm run licenses`.

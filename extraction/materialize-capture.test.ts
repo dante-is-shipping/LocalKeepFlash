@@ -73,16 +73,18 @@ describe('materializeImageCapture', () => {
 });
 
 describe('materializeSelectionCapture', () => {
-  it('preserves the exact selection and its text-fragment address', () => {
+  it('preserves the exact selection and its text-fragment address', async () => {
     const extracted: ExtractedSelection = {
       title: 'Selection source',
       canonicalUrl: 'https://example.com/source',
       markdown: '**keep this**',
       selectedText: 'keep this',
       textFragmentUrl: 'https://example.com/source#:~:text=keep%20this',
+      assets: [],
+      extractionStatus: 'complete',
     };
 
-    const capture = materializeSelectionCapture(extracted, {
+    const capture = await materializeSelectionCapture(extracted, {
       id: 'selection-1',
       sourceUrl: 'https://example.com/source?view=full',
       capturedAt: '2026-08-21T08:15:30.000Z',

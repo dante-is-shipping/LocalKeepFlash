@@ -3,5 +3,6 @@
   "extensionDescription": { "message": "将网页、选区、图片与 YouTube 字幕直接保存为本地 Markdown。" },
   "savePage": { "message": "保存网页到 LocalKeepFlash" },
   "saveSelection": { "message": "保存选区到 LocalKeepFlash" },
-  "saveImage": { "message": "保存图片到 LocalKeepFlash" }
+  "saveImage": { "message": "保存图片到 LocalKeepFlash" },
+  "saveCommand": { "message": "保存当前网页到 LocalKeepFlash" }
 }

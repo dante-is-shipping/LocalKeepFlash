@@ -15,4 +15,6 @@ When the user saves a page, LocalKeepFlash reads that page and may request image
 
 The extension stores the selected directory handle, interface language, caption language preferences, and an incomplete-save intent in browser-local storage. Saved content is not encrypted. If the chosen folder is synchronized by another application, that application's privacy policy applies.
 
+The onboarding page contains an optional link to the KeepFlash website. LocalKeepFlash does not send capture content or extension settings through this link. If the user chooses to open it, the website's own privacy policy applies.
+
 Uninstalling LocalKeepFlash does not remove files from the selected directory.

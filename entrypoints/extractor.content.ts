@@ -47,9 +47,20 @@ export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
   runAt: 'document_idle',
   main() {
+    const scope = globalThis as typeof globalThis & { __localKeepFlashDocumentToken?: string };
+    const documentToken = scope.__localKeepFlashDocumentToken ??= crypto.randomUUID();
     browser.runtime.onMessage.addListener(
       async (message: ContentRequest): Promise<ContentResponse | undefined> => {
         try {
+          if (message.type === 'GET_DOCUMENT_TOKEN') {
+            return { ok: true, payload: documentToken };
+          }
+          if (
+            message.type !== 'SHOW_TOAST' &&
+            (message.expectedUrl !== location.href || message.expectedDocumentToken !== documentToken)
+          ) {
+            throw new Error('The page changed before LocalKeepFlash could capture it. Save again.');
+          }
           if (message.type === 'EXTRACT_PAGE') {
             return { ok: true, payload: extractReadableDocument(document, location.href) };
           }

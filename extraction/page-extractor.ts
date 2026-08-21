@@ -1,6 +1,8 @@
 import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
+import { escapeMarkdownTextBlock } from '@/domain/markdown';
+import { safeRemoteUrl } from '@/network/url-safety';
 
 export interface ExtractedAssetCandidate {
   sourceUrl: string;
@@ -25,6 +27,8 @@ export interface ExtractedSelection {
   markdown: string;
   selectedText: string;
   textFragmentUrl?: string;
+  assets: ExtractedAssetCandidate[];
+  extractionStatus: 'complete' | 'partial';
 }
 
 function metadataContent(document: Document, selector: string): string | undefined {
@@ -75,7 +79,7 @@ export function extractReadableDocument(
       canonicalUrl,
       siteName,
       language,
-      markdown: description,
+      markdown: escapeMarkdownTextBlock(description),
       assets: [],
       extractionStatus: 'partial',
     };
@@ -103,7 +107,7 @@ export function extractReadableDocument(
   const seen = new Set<string>();
   for (const image of container.querySelectorAll<HTMLImageElement>('img[src]')) {
     const source = absoluteUrl(image.getAttribute('src') ?? '', sourceUrl);
-    if (!source) {
+    if (!source || !safeRemoteUrl(source)) {
       image.remove();
       continue;
     }
@@ -139,6 +143,32 @@ export function extractSelection(
     container.append(selection.getRangeAt(index).cloneContents());
   }
 
+  container
+    .querySelectorAll('script, style, form, iframe, noscript, template, input, button')
+    .forEach((node) => node.remove());
+  for (const element of container.querySelectorAll<HTMLElement>('*')) {
+    for (const attribute of Array.from(element.attributes)) {
+      if (attribute.name.toLowerCase().startsWith('on')) element.removeAttribute(attribute.name);
+    }
+  }
+  for (const anchor of container.querySelectorAll<HTMLAnchorElement>('a[href]')) {
+    const safe = absoluteUrl(anchor.getAttribute('href') ?? '', sourceUrl);
+    if (safe) anchor.href = safe;
+    else anchor.removeAttribute('href');
+  }
+  const assets: ExtractedAssetCandidate[] = [];
+  const seen = new Set<string>();
+  for (const image of container.querySelectorAll<HTMLImageElement>('img[src]')) {
+    const source = absoluteUrl(image.getAttribute('src') ?? '', sourceUrl);
+    if (source && safeRemoteUrl(source)) {
+      image.src = source;
+      if (!seen.has(source)) {
+        seen.add(source);
+        assets.push({ sourceUrl: source, alt: image.alt.trim() });
+      }
+    } else image.remove();
+  }
+
   const selectedText = selection.toString().trim();
   const canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.href;
   const canonicalUrl = canonical ? absoluteUrl(canonical, sourceUrl) ?? undefined : undefined;
@@ -156,5 +186,7 @@ export function extractSelection(
     markdown: createTurndownService().turndown(container).trim(),
     selectedText,
     textFragmentUrl,
+    assets,
+    extractionStatus: 'complete',
   };
 }

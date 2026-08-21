@@ -20,10 +20,17 @@ const MENU_SELECTION = 'local-keepflash-save-selection';
 const MENU_IMAGE = 'local-keepflash-save-image';
 const PENDING_INTENT_KEY = 'pending-save-intent';
 
+interface SaveIntentBase {
+  tabId: number;
+  expectedUrl: string;
+  expectedDocumentToken: string;
+  createdAt: number;
+}
+
 type SaveIntent =
-  | { kind: 'page'; tabId: number }
-  | { kind: 'selection'; tabId: number }
-  | { kind: 'image'; tabId: number; imageUrl: string };
+  | (SaveIntentBase & { kind: 'page' })
+  | (SaveIntentBase & { kind: 'selection' })
+  | (SaveIntentBase & { kind: 'image'; imageUrl: string });
 
 const messages = {
   en: {
@@ -42,6 +49,24 @@ const messages = {
 
 function createId(): string {
   return crypto.randomUUID().replaceAll('-', '').toUpperCase();
+}
+
+async function createIntent(
+  tab: Browser.tabs.Tab,
+  intent: { kind: 'page' | 'selection' } | { kind: 'image'; imageUrl: string },
+): Promise<SaveIntent | null> {
+  if (!tab.id || !tab.url || !/^https?:/.test(tab.url)) return null;
+  const expectedDocumentToken = await sendToContent<string>(tab.id, {
+    type: 'GET_DOCUMENT_TOKEN',
+  }).catch(() => null);
+  if (!expectedDocumentToken) return null;
+  return {
+    ...intent,
+    tabId: tab.id,
+    expectedUrl: tab.url,
+    expectedDocumentToken,
+    createdAt: Date.now(),
+  } as SaveIntent;
 }
 
 async function sendToContent<T>(tabId: number, request: ContentRequest): Promise<T> {
@@ -78,8 +103,18 @@ async function buildCapture(intent: SaveIntent): Promise<Capture> {
   const preferences = await getPreferences();
   const tab = await browser.tabs.get(intent.tabId);
   const sourceUrl = tab.url;
-  if (!sourceUrl || !/^https?:/.test(sourceUrl)) {
-    throw new Error('LocalKeepFlash supports HTTP(S) pages only.');
+  if (
+    !sourceUrl ||
+    sourceUrl !== intent.expectedUrl ||
+    Date.now() - intent.createdAt > 15 * 60 * 1000
+  ) {
+    throw new Error('The page changed or the save request expired. Save it again.');
+  }
+  const currentDocumentToken = await sendToContent<string>(intent.tabId, {
+    type: 'GET_DOCUMENT_TOKEN',
+  });
+  if (currentDocumentToken !== intent.expectedDocumentToken) {
+    throw new Error('The page document changed. Save it again.');
   }
 
   if (intent.kind === 'page' && extractYoutubeVideoId(sourceUrl)) {
@@ -87,18 +122,28 @@ async function buildCapture(intent: SaveIntent): Promise<Capture> {
   }
 
   if (intent.kind === 'page') {
-    const extracted = await sendToContent<ExtractedPage>(intent.tabId, { type: 'EXTRACT_PAGE' });
+    const extracted = await sendToContent<ExtractedPage>(intent.tabId, {
+      type: 'EXTRACT_PAGE',
+      expectedUrl: sourceUrl,
+      expectedDocumentToken: intent.expectedDocumentToken,
+    });
     return materializePageCapture(extracted, { ...identity, sourceUrl });
   }
 
   if (intent.kind === 'selection') {
     const extracted = await sendToContent<ExtractedSelection>(intent.tabId, {
       type: 'EXTRACT_SELECTION',
+      expectedUrl: sourceUrl,
+      expectedDocumentToken: intent.expectedDocumentToken,
     });
-    return materializeSelectionCapture(extracted, { ...identity, sourceUrl });
+    return await materializeSelectionCapture(extracted, { ...identity, sourceUrl });
   }
 
-  const context = await sendToContent<PageContext>(intent.tabId, { type: 'GET_PAGE_CONTEXT' });
+  const context = await sendToContent<PageContext>(intent.tabId, {
+    type: 'GET_PAGE_CONTEXT',
+    expectedUrl: sourceUrl,
+    expectedDocumentToken: intent.expectedDocumentToken,
+  });
   return materializeImageCapture(
     {
       imageUrl: intent.imageUrl,
@@ -127,6 +172,12 @@ async function executeSave(intent: SaveIntent) {
   try {
     await cleanupStalePending(new BrowserDirectory(handle));
     const capture = await buildCapture(intent);
+    const finalDocumentToken = await sendToContent<string>(intent.tabId, {
+      type: 'GET_DOCUMENT_TOKEN',
+    });
+    if (finalDocumentToken !== intent.expectedDocumentToken) {
+      throw new Error('The page document changed during capture. Save it again.');
+    }
     const result = await saveCapture(capture, new BrowserDirectory(handle));
     const tone = result.status === 'complete' ? 'success' : 'partial';
     await toast(intent.tabId, tone, localized[tone]);
@@ -143,6 +194,16 @@ async function executeSave(intent: SaveIntent) {
   } finally {
     setTimeout(() => void browser.action.setBadgeText({ text: '', tabId: intent.tabId }), 4500);
   }
+}
+
+let saveQueue = Promise.resolve();
+
+function enqueueSave(intent: SaveIntent): Promise<void> {
+  const queued = saveQueue.then(() => executeSave(intent));
+  saveQueue = queued.catch((error) => {
+    console.error('[LocalKeepFlash] queued save failed', error);
+  });
+  return queued;
 }
 
 async function cleanupArchive() {
@@ -187,24 +248,36 @@ export default defineBackground(() => {
   });
 
   browser.action.onClicked.addListener((tab) => {
-    if (tab.id) void executeSave({ kind: 'page', tabId: tab.id });
+    void createIntent(tab, { kind: 'page' }).then((intent) => {
+      if (intent) return enqueueSave(intent);
+    });
   });
 
   browser.commands.onCommand.addListener(async (command) => {
     if (command !== 'save-current-page') return;
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) await executeSave({ kind: 'page', tabId: tab.id });
+    if (tab) {
+      const intent = await createIntent(tab, { kind: 'page' });
+      if (intent) await enqueueSave(intent);
+    }
   });
 
   browser.contextMenus.onClicked.addListener((info, tab) => {
-    if (!tab?.id) return;
-    if (info.menuItemId === MENU_PAGE) void executeSave({ kind: 'page', tabId: tab.id });
-    if (info.menuItemId === MENU_SELECTION) {
-      void executeSave({ kind: 'selection', tabId: tab.id });
-    }
-    if (info.menuItemId === MENU_IMAGE && info.srcUrl) {
-      void executeSave({ kind: 'image', tabId: tab.id, imageUrl: info.srcUrl });
-    }
+    if (!tab) return;
+    void (async () => {
+      if (info.menuItemId === MENU_PAGE) {
+        const intent = await createIntent(tab, { kind: 'page' });
+        if (intent) await enqueueSave(intent);
+      }
+      if (info.menuItemId === MENU_SELECTION) {
+        const intent = await createIntent(tab, { kind: 'selection' });
+        if (intent) await enqueueSave(intent);
+      }
+      if (info.menuItemId === MENU_IMAGE && info.srcUrl) {
+        const intent = await createIntent(tab, { kind: 'image', imageUrl: info.srcUrl });
+        if (intent) await enqueueSave(intent);
+      }
+    })();
   });
 
   browser.runtime.onMessage.addListener(async (message: { type?: string }) => {
@@ -213,6 +286,6 @@ export default defineBackground(() => {
     const intent = stored[PENDING_INTENT_KEY] as SaveIntent | undefined;
     if (!intent) return;
     await browser.storage.local.remove(PENDING_INTENT_KEY);
-    await executeSave(intent);
+    await enqueueSave(intent);
   });
 });

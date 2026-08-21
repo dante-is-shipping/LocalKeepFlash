@@ -65,7 +65,7 @@ describe('saveCapture', () => {
 
     expect(result).toEqual({
       notePath:
-        'notes/2026/08/2026-08-21-081530--你好-local-files-belong-to-you--K4W2Q8.md',
+        'notes/2026/08/你好-local-files-belong-to-you--K4W2Q8.md',
       status: 'complete',
     });
     expect(directory.files.has('.local-keepflash/schema.json')).toBe(true);
@@ -83,6 +83,30 @@ describe('saveCapture', () => {
       ),
     ).toBe(false);
   });
+
+  it('uses a longer suffix instead of overwriting a colliding note', async () => {
+    const directory = new MemoryDirectory();
+    await directory.writeText(
+      'notes/2026/08/collision--123456.md',
+      '# Existing note',
+    );
+    const capture: Capture = {
+      schemaVersion: 1,
+      id: 'ABCDEF123456',
+      type: 'page',
+      title: 'Collision',
+      sourceUrl: 'https://example.com',
+      capturedAt: '2026-08-21T08:15:30.000Z',
+      extractionStatus: 'complete',
+      markdown: 'New note',
+      assets: [],
+    };
+
+    const result = await saveCapture(capture, directory);
+
+    expect(result.notePath).toBe('notes/2026/08/collision--CDEF123456.md');
+    expect(directory.files.get('notes/2026/08/collision--123456.md')).toBe('# Existing note');
+  });
 });
 
 describe('cleanupStalePending', () => {
@@ -90,12 +114,12 @@ describe('cleanupStalePending', () => {
     const directory = new MemoryDirectory();
     await directory.writeText(
       '.local-keepflash/pending/old.json',
-      '{"id":"old","started_at":"2026-08-19T08:00:00.000Z"}',
+      '{"id":"old","note_path":"notes/2026/08/old--old.md","state":"pending","started_at":"2026-08-19T08:00:00.000Z"}',
     );
     await directory.writeBinary('assets/old/image.png', new Uint8Array([1]));
     await directory.writeText(
       '.local-keepflash/pending/recent.json',
-      '{"id":"recent","started_at":"2026-08-21T07:30:00.000Z"}',
+      '{"id":"recent","note_path":"notes/2026/08/recent--recent.md","state":"pending","started_at":"2026-08-21T07:30:00.000Z"}',
     );
     await directory.writeBinary('assets/recent/image.png', new Uint8Array([2]));
 
@@ -105,5 +129,20 @@ describe('cleanupStalePending', () => {
     expect(directory.files.has('.local-keepflash/pending/old.json')).toBe(false);
     expect(directory.files.has('assets/recent/image.png')).toBe(true);
     expect(directory.files.has('.local-keepflash/pending/recent.json')).toBe(true);
+  });
+
+  it('keeps committed assets when a stale journal survives note commit', async () => {
+    const directory = new MemoryDirectory();
+    await directory.writeText(
+      '.local-keepflash/pending/saved.json',
+      '{"id":"saved","note_path":"notes/2026/08/saved--saved.md","state":"pending","started_at":"2026-08-19T08:00:00.000Z"}',
+    );
+    await directory.writeText('notes/2026/08/saved--saved.md', '# Saved');
+    await directory.writeBinary('assets/saved/image.png', new Uint8Array([1]));
+
+    await cleanupStalePending(directory, new Date('2026-08-21T08:00:00.000Z'));
+
+    expect(directory.files.has('assets/saved/image.png')).toBe(true);
+    expect(directory.files.has('.local-keepflash/pending/saved.json')).toBe(false);
   });
 });

@@ -11,7 +11,7 @@ export default defineConfig({
     host_permissions: ['http://*/*', 'https://*/*'],
     incognito: 'not_allowed',
     action: {
-      default_title: 'Save with LocalKeepFlash',
+      default_title: '__MSG_savePage__',
     },
     icons: {
       16: '/icon-16.png',
@@ -29,7 +29,7 @@ export default defineConfig({
           default: 'Alt+Shift+S',
           mac: 'MacCtrl+Shift+S',
         },
-        description: 'Save the current page',
+        description: '__MSG_saveCommand__',
       },
     },
   },
