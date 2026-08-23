@@ -14,6 +14,7 @@ import { ArchiveMark } from './ArchiveMark';
 import { copy } from './copy';
 
 type Mode = 'onboarding' | 'options';
+type ThemePreference = 'system' | 'light' | 'dark';
 
 const languageChoices = [
   { code: 'en', label: 'English' },
@@ -23,6 +24,19 @@ const languageChoices = [
 
 const KEEPFLASH_MARKETING_URL =
   'https://keepflash.com/?utm_source=localkeepflash&utm_medium=extension&utm_campaign=onboarding';
+const THEME_STORAGE_KEY = 'local-keepflash-theme';
+
+function getInitialTheme(): ThemePreference {
+  try {
+    const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    if (storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'system') {
+      return storedTheme;
+    }
+  } catch {
+    // Keep the system preference when storage is unavailable.
+  }
+  return 'system';
+}
 
 export function SettingsApp({ mode }: { mode: Mode }) {
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
@@ -31,6 +45,7 @@ export function SettingsApp({ mode }: { mode: Mode }) {
   const [step, setStep] = useState(mode === 'onboarding' ? 1 : 2);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(true);
+  const [theme, setTheme] = useState<ThemePreference>(getInitialTheme);
   const text = useMemo(() => copy[preferences.locale], [preferences.locale]);
 
   useEffect(() => {
@@ -51,6 +66,15 @@ export function SettingsApp({ mode }: { mode: Mode }) {
     document.title = mode === 'onboarding' ? text.pageTitleOnboarding : text.pageTitleSettings;
   }, [mode, preferences.locale, text]);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // The visual preference can remain session-only when storage is unavailable.
+    }
+  }, [theme]);
+
   async function chooseDirectory() {
     setNotice('');
     try {
@@ -62,7 +86,7 @@ export function SettingsApp({ mode }: { mode: Mode }) {
 
       const port = new BrowserDirectory(handle);
       const testPath = '.local-keepflash/write-test.txt';
-      await port.writeText(testPath, `LocalKeepFlash write test — ${new Date().toISOString()}\n`);
+      await port.writeText(testPath, `LocalKeepFlash write test - ${new Date().toISOString()}\n`);
       await port.remove(testPath);
       await saveDirectoryHandle(handle);
       setDirectory(handle);
@@ -115,7 +139,25 @@ export function SettingsApp({ mode }: { mode: Mode }) {
     await browser.runtime.sendMessage({ type: 'ONBOARDING_COMPLETE' }).catch(() => undefined);
   }
 
-  if (busy) return <main className="shell loading" aria-label={text.loading} />;
+  if (busy) {
+    return (
+      <main className="shell loading" aria-label={text.loading} aria-busy="true">
+        <div className="page-frame">
+          <div className="loading-header" />
+          <div className="loading-hero">
+            <div>
+              <span />
+              <strong />
+              <i />
+              <i />
+            </div>
+            <aside />
+          </div>
+          <div className="loading-panel" />
+        </div>
+      </main>
+    );
+  }
 
   const isReadyScreen = mode === 'onboarding' && step === 4;
   const orderedLanguageChoices = [
@@ -126,160 +168,241 @@ export function SettingsApp({ mode }: { mode: Mode }) {
       (choice) => !preferences.transcriptLanguages.includes(choice.code),
     ),
   ];
+  const themeOptions: Array<{ value: ThemePreference; label: string }> = [
+    { value: 'system', label: text.themeSystem },
+    { value: 'light', label: text.themeLight },
+    { value: 'dark', label: text.themeDark },
+  ];
+  const progressItems = [
+    { value: 1, label: text.permissionStep },
+    { value: 2, label: text.folderStep },
+    { value: 3, label: text.captionsStep },
+  ];
+  const showPermission = mode === 'options' || step === 1;
+  const showFolder = mode === 'options' || step === 2;
+  const showLanguages = mode === 'options' || step === 3;
+
   return (
-    <main className="shell">
-      <div className="grain" />
-      <header className="masthead">
-        <a className="brand" href="#top" aria-label="LocalKeepFlash">
-          <ArchiveMark />
-          <span>LocalKeepFlash</span>
-        </a>
-        <label className="locale-switch">
-          <span className="sr-only">{text.languageLabel}</span>
-          <select
-            value={preferences.locale}
-            onChange={(event) =>
-              setPreferences((current) => ({
-                ...current,
-                locale: event.target.value as Preferences['locale'],
-              }))
-            }
-          >
-            <option value="en">EN</option>
-            <option value="zh">中文</option>
-          </select>
-        </label>
-      </header>
-
-      <section className="hero" id="top">
-        <div className="hero-copy">
-          <p className="eyebrow">{text.eyebrow}</p>
-          <h1>{mode === 'onboarding' ? text.onboardingTitle : text.settingsTitle}</h1>
-          <p className="lede">{text.intro}</p>
-        </div>
-        <div className="file-stack" aria-hidden="true">
-          <span className="file-card file-card-back">.md</span>
-          <span className="file-card file-card-middle">01</span>
-          <span className="file-card file-card-front">{text.localLabel}</span>
-        </div>
-      </section>
-
-      {isReadyScreen ? (
-        <section className="ready-panel">
-          <span className="ready-pulse" />
-          <p className="section-number">{text.readyStep}</p>
-          <h2>{text.readyTitle}</h2>
-          <p>{text.readyBody}</p>
-          <button className="primary" onClick={() => window.close()}>
-            {text.readyButton}
-          </button>
-        </section>
-      ) : (
-        <section className="steps" aria-live="polite">
-          <article className={`step-card ${step === 1 || mode === 'options' ? 'active' : ''}`}>
-            <p className="section-number">{text.permissionStep}</p>
-            <h2>{text.permissionTitle}</h2>
-            <p>{text.permissionBody}</p>
-            {mode === 'onboarding' && step === 1 && (
-              <button className="primary" onClick={() => setStep(2)}>{text.next}</button>
-            )}
-          </article>
-
-          <article className={`step-card ${step === 2 || mode === 'options' ? 'active' : ''}`}>
-            <p className="section-number">{text.folderStep}</p>
-            <h2>{text.folderTitle}</h2>
-            <p>{text.folderBody}</p>
-            <button className="folder-button" onClick={chooseDirectory}>
-              <span className="folder-icon" aria-hidden="true" />
-              <span>
-                <strong>{directory ? directory.name : text.noFolder}</strong>
-                <small>{permissionReady ? text.permissionReady : text.permissionMissing}</small>
-              </span>
-              <em>{directory ? text.changeFolder : text.chooseFolder}</em>
-            </button>
-            <p className="privacy-note">{text.folderPrivacy}</p>
-          </article>
-
-          <article className={`step-card ${step === 3 || mode === 'options' ? 'active' : ''}`}>
-            <p className="section-number">{text.captionsStep}</p>
-            <h2>{text.languageTitle}</h2>
-            <p>{text.languageBody}</p>
-            <div className="language-list">
-              {orderedLanguageChoices.map((language) => {
-                const checked = preferences.transcriptLanguages.includes(language.code);
-                const order = preferences.transcriptLanguages.indexOf(language.code);
-                return (
-                  <label className="language-row" key={language.code}>
-                    <span className="language-order">{checked ? String(order + 1).padStart(2, '0') : '—'}</span>
-                    <span>{language.label}</span>
-                    {checked && (
-                      <span className="order-buttons">
-                        <button
-                          type="button"
-                          aria-label={`${language.label} ${text.moveUp}`}
-                          disabled={order === 0}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            moveTranscriptLanguage(language.code, -1);
-                          }}
-                        >↑</button>
-                        <button
-                          type="button"
-                          aria-label={`${language.label} ${text.moveDown}`}
-                          disabled={order === preferences.transcriptLanguages.length - 1}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            moveTranscriptLanguage(language.code, 1);
-                          }}
-                        >↓</button>
-                      </span>
-                    )}
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleTranscriptLanguage(language.code)}
-                    />
-                  </label>
-                );
-              })}
+    <main className={`shell ${mode}-mode`}>
+      <div className="page-frame">
+        <header className="masthead">
+          <a className="brand" href="#top" aria-label="LocalKeepFlash">
+            <ArchiveMark />
+            <span>LocalKeepFlash</span>
+          </a>
+          <div className="header-actions">
+            <div className="theme-switch" role="group" aria-label={text.themeLabel}>
+              {themeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={theme === option.value}
+                  onClick={() => setTheme(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
-            <button className="primary" onClick={finish}>
-              {mode === 'onboarding' ? text.finish : text.saveSettings}
-            </button>
-          </article>
-        </section>
-      )}
-      {mode === 'onboarding' && (
-        <aside className="keepflash-bridge" aria-labelledby="keepflash-bridge-title">
-          <div className="keepflash-bridge-copy">
-            <p className="section-number">{text.keepFlashEyebrow}</p>
-            <h2 id="keepflash-bridge-title">{text.keepFlashTitle}</h2>
-            <p>{text.keepFlashBody}</p>
-            <div className="keepflash-bridge-action">
-              <a
-                href={KEEPFLASH_MARKETING_URL}
-                target="_blank"
-                rel="noreferrer"
+            <label className="locale-switch">
+              <span className="sr-only">{text.languageLabel}</span>
+              <select
+                aria-label={text.languageLabel}
+                value={preferences.locale}
+                onChange={(event) =>
+                  setPreferences((current) => ({
+                    ...current,
+                    locale: event.target.value as Preferences['locale'],
+                  }))
+                }
               >
-                {text.keepFlashCta}
-                <span aria-hidden="true">↗</span>
-              </a>
-              <small>{text.keepFlashNote}</small>
+                <option value="en">EN</option>
+                <option value="zh">中文</option>
+              </select>
+            </label>
+          </div>
+        </header>
+
+        <section className="hero" id="top">
+          <div className="hero-copy">
+            <p className="section-label">{text.eyebrow}</p>
+            <h1>{mode === 'onboarding' ? text.onboardingTitle : text.settingsTitle}</h1>
+            <div className="pencil-line" aria-hidden="true" />
+            <p className="lede">{text.intro}</p>
+          </div>
+          <div className="hero-visual" aria-hidden="true">
+            <div className="hero-brand-card">
+              <ArchiveMark />
+              <div>
+                <small>{text.localLabel}</small>
+                <strong>LocalKeepFlash</strong>
+              </div>
+            </div>
+            <div className="hero-route">
+              <span>WEB</span>
+              <i />
+              <span>MARKDOWN</span>
             </div>
           </div>
-          <div className="keepflash-bridge-mark" aria-hidden="true">
-            <span>{text.keepFlashMarkKicker}</span>
-            <i />
-            <strong>KEEPFLASH</strong>
-            <small>{text.keepFlashMarkFeatures}</small>
-          </div>
-        </aside>
-      )}
-      {notice && <div className="notice">{notice}</div>}
-      <footer>
-        <span>LOCALKEEPFLASH / 0.1.0</span>
-        <span>AGPL-3.0</span>
-      </footer>
+        </section>
+
+        {mode === 'onboarding' && !isReadyScreen && (
+          <nav className="setup-progress" aria-label={text.progressLabel}>
+            {progressItems.map((item) => (
+              <div
+                key={item.value}
+                className={item.value === step ? 'current' : item.value < step ? 'complete' : ''}
+                aria-current={item.value === step ? 'step' : undefined}
+              >
+                <span>{item.value}</span>
+                <strong>{item.label}</strong>
+              </div>
+            ))}
+          </nav>
+        )}
+
+        {isReadyScreen ? (
+          <section className="ready-panel">
+            <div className="ready-mark" aria-hidden="true">✓</div>
+            <p className="section-label">{text.readyStep}</p>
+            <h2>{text.readyTitle}</h2>
+            <p>{text.readyBody}</p>
+            <button type="button" className="primary" onClick={() => window.close()}>
+              {text.readyButton}
+            </button>
+          </section>
+        ) : (
+          <section className="steps" aria-live="polite">
+            {showPermission && (
+              <article className="step-card permission-card">
+                <p className="section-label">{text.permissionStep}</p>
+                <h2>{text.permissionTitle}</h2>
+                <p>{text.permissionBody}</p>
+                {mode === 'onboarding' && (
+                  <button type="button" className="primary" onClick={() => setStep(2)}>
+                    {text.next}
+                  </button>
+                )}
+              </article>
+            )}
+
+            {showFolder && (
+              <article className="step-card folder-card">
+                <p className="section-label">{text.folderStep}</p>
+                <h2>{text.folderTitle}</h2>
+                <p>{text.folderBody}</p>
+                <button type="button" className="folder-button" onClick={chooseDirectory}>
+                  <span className="folder-icon" aria-hidden="true">MD</span>
+                  <span>
+                    <strong>{directory ? directory.name : text.noFolder}</strong>
+                    <small>{permissionReady ? text.permissionReady : text.permissionMissing}</small>
+                  </span>
+                  <em>{directory ? text.changeFolder : text.chooseFolder}</em>
+                </button>
+                <p className="privacy-note">{text.folderPrivacy}</p>
+                {mode === 'onboarding' && (
+                  <div className="button-row">
+                    <button type="button" className="secondary" onClick={() => setStep(1)}>
+                      {text.back}
+                    </button>
+                    {directory && permissionReady && (
+                      <button type="button" className="primary" onClick={() => setStep(3)}>
+                        {text.next}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </article>
+            )}
+
+            {showLanguages && (
+              <article className="step-card language-card">
+                <p className="section-label">{text.captionsStep}</p>
+                <h2>{text.languageTitle}</h2>
+                <p>{text.languageBody}</p>
+                <div className="language-list">
+                  {orderedLanguageChoices.map((language) => {
+                    const checked = preferences.transcriptLanguages.includes(language.code);
+                    const order = preferences.transcriptLanguages.indexOf(language.code);
+                    return (
+                      <label className="language-row" key={language.code}>
+                        <span className="language-order">
+                          {checked ? String(order + 1).padStart(2, '0') : '-'}
+                        </span>
+                        <span>{language.label}</span>
+                        {checked && (
+                          <span className="order-buttons">
+                            <button
+                              type="button"
+                              aria-label={`${language.label} ${text.moveUp}`}
+                              disabled={order === 0}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                moveTranscriptLanguage(language.code, -1);
+                              }}
+                            >↑</button>
+                            <button
+                              type="button"
+                              aria-label={`${language.label} ${text.moveDown}`}
+                              disabled={order === preferences.transcriptLanguages.length - 1}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                moveTranscriptLanguage(language.code, 1);
+                              }}
+                            >↓</button>
+                          </span>
+                        )}
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleTranscriptLanguage(language.code)}
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="button-row">
+                  {mode === 'onboarding' && (
+                    <button type="button" className="secondary" onClick={() => setStep(2)}>
+                      {text.back}
+                    </button>
+                  )}
+                  <button type="button" className="primary" onClick={finish}>
+                    {mode === 'onboarding' ? text.finish : text.saveSettings}
+                  </button>
+                </div>
+              </article>
+            )}
+          </section>
+        )}
+
+        {mode === 'onboarding' && (
+          <aside className="keepflash-bridge" aria-labelledby="keepflash-bridge-title">
+            <div className="keepflash-bridge-copy">
+              <p className="section-label">{text.keepFlashEyebrow}</p>
+              <h2 id="keepflash-bridge-title">{text.keepFlashTitle}</h2>
+              <p>{text.keepFlashBody}</p>
+              <div className="keepflash-bridge-action">
+                <a href={KEEPFLASH_MARKETING_URL} target="_blank" rel="noreferrer">
+                  {text.keepFlashCta}
+                  <span aria-hidden="true">↗</span>
+                </a>
+                <small>{text.keepFlashNote}</small>
+              </div>
+            </div>
+            <div className="keepflash-bridge-mark" aria-hidden="true">
+              <span>{text.keepFlashMarkKicker}</span>
+              <i />
+              <strong>KEEPFLASH</strong>
+              <small>{text.keepFlashMarkFeatures}</small>
+            </div>
+          </aside>
+        )}
+        {notice && <div className="notice" role="status">{notice}</div>}
+        <footer>
+          <span>LocalKeepFlash 0.1.0</span>
+          <span>AGPL-3.0</span>
+        </footer>
+      </div>
     </main>
   );
 }
