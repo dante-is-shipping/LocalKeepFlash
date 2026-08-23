@@ -399,7 +399,7 @@ export function SettingsApp({ mode }: { mode: Mode }) {
         )}
         {notice && <div className="notice" role="status">{notice}</div>}
         <footer>
-          <span>LocalKeepFlash 0.1.0</span>
+          <span>LocalKeepFlash 0.1.1</span>
           <span>AGPL-3.0</span>
         </footer>
       </div>

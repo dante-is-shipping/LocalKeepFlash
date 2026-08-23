@@ -1,7 +1,7 @@
 {
   "name": "local-keepflash",
   "description": "A local-first web clipper that saves pages, selections, images, and YouTube transcripts directly as Markdown.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
